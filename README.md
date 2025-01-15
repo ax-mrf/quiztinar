@@ -36,7 +36,7 @@ The output is saved as both PDF and CSV files for readability and easy integrati
 
 2. **Set Up a Virtual Environment**:
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
    ```
 
