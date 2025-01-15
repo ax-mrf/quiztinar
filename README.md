@@ -57,7 +57,7 @@ The output is saved as both PDF and CSV files for readability and easy integrati
 
 1. **Run the Script**:
    ```bash
-   python Quiztinar.py
+   python3 Quiztinar.py
    ```
 
 2. **Using the GUI**:
