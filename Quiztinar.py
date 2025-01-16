@@ -197,9 +197,13 @@ def get_assistant_id_by_name(my_assistants, name):
 # Main feature of the function: poll for an updated response before saving it into the collected output.
 # Other features: if user chose to confirm and modify learning objectives of the course, it opens a window for that
 def wait_for_assistant_response(messages, thread, LO, course, run, confirm_modify_lo=False, log_function=print):
+    """
+    Waits for the assistant's response and captures the output.
+    Also handles confirmation and modification of learning objectives if required.
+    """
     while True:
         try:
-            latest_message = messages.data[0] # Save last message output
+            latest_message = messages.data[0]  # Save last message output
             if latest_message.role == 'assistant':
                 if LO:
                     learning_objectives = messages.data[0].content[0].text.value
@@ -226,6 +230,7 @@ def wait_for_assistant_response(messages, thread, LO, course, run, confirm_modif
                     # Return the learning objectives
                     return learning_objectives
                 else:
+                    # Capture the quiz output
                     capture_output(messages.data[0].content[0].text.value)
                 break
         except (IndexError, AttributeError) as e:
@@ -236,7 +241,7 @@ def wait_for_assistant_response(messages, thread, LO, course, run, confirm_modif
             sys.exit()
             break
         messages = client.beta.threads.messages.list(thread_id=thread.id)
-
+        
 # In case that the user decided to generate more than 1 quiz (5 questions)
 # Maximum number of quizzes allowed is hardcoded to 10 (50 questions). Please modify to your liking on your own responsibility while putting in mind token and usage limitations of OpenAI API
 def generate_more(repeat_function, iterations, thread_qu, messages_qu, assistant_id_q, course, log_function):
@@ -256,6 +261,9 @@ def generate_more(repeat_function, iterations, thread_qu, messages_qu, assistant
 # Generating 5 more questions for the quiz
 # This function includes a coded time delay of 60 seconds before every run to ensure the process isn't broken because of TPM (tokens allowed per minute) limitations.
 def repeat_quiz(thread_qu, messages_qu, assistant_id_q, course, log_function):
+    """
+    Generates 5 more unique questions for the quiz and captures the output.
+    """
     message_qu = client.beta.threads.messages.create(
         thread_id=thread_qu.id,
         role="user",
@@ -277,55 +285,70 @@ def repeat_quiz(thread_qu, messages_qu, assistant_id_q, course, log_function):
     log_function("Quiz Generated!")
 
 def capture_output(output):
+    """
+    Captures the quiz output and appends it to the collected_output list.
+    Also logs the captured output for debugging.
+    """
+    global collected_output
     collected_output.append(output)
+    print(f"Captured Output: {output}")  # Log the captured output for debugging
 
 
 # In this part the output is processed into CSV by using regular expression.
 # This is made to facilitate further processing the generated content, or integrating it with another platform's API or data import/entry features.
-import re
-import pandas as pd
-from pathlib import Path
+
 
 def process_quiz_output_to_csv(collected_output, file_path, log_function=print):
     """
     Process the quiz output into a DataFrame and save it as a CSV file.
-    
+    Includes debugging steps to ensure all questions are captured and parsed correctly.
     """
     # Define regex patterns to extract quiz data
     question_pattern = re.compile(
         r"\*\*Question (\d{1,2}):\*\*\s*(.+?)\n"  # Question number and stem
-        r"A\) (.+?)\n"                            # Choice A 
-        r"B\) (.+?)\n"                            # Choice B 
-        r"C\) (.+?)\n"                            # Choice C 
-        r"D\) (.+?)\n"                            # Choice D 
-        r"\*\*Correct Answer:\*\* (.+?)\n"        # Key
-        r"\*\*Explanation:\*\* (.+?)\n"           # Explanation
-        r"\*\*Reference:\*\* (.+?)\n",            # Reference
+        r"[A-Za-z]\)\s*(.+?)\n"                  # Choice A 
+        r"[A-Za-z]\)\s*(.+?)\n"                  # Choice B 
+        r"[A-Za-z]\)\s*(.+?)\n"                  # Choice C 
+        r"[A-Za-z]\)\s*(.+?)\n"                  # Choice D 
+        r"\*\*Correct Answer:\*\*\s*(.+?)\n"     # Key
+        r"\*\*Explanation:\*\*\s*(.+?)\n"        # Explanation
+        r"\*\*Reference:\*\*\s*(.+?)\n",         # Reference
         re.DOTALL
     )
 
     # Initialize a list to store extracted data
     quiz_data = []
 
+    # Log the collected output for debugging
+    log_function(f"Collected Output: {collected_output}")
+
     # Iterate through the collected output and extract data
     for output in collected_output:
         matches = question_pattern.findall(output)
+        log_function(f"Matches Found: {matches}")  # Log the matches for debugging
+
         for match in matches:
-            question_number, stem, choice_a, choice_b, choice_c, choice_d, key, explanation, reference = match
-            quiz_data.append({
-                "Question number": question_number.strip(),
-                "Stem": stem.strip(),
-                "Choice A": choice_a.strip(),
-                "Choice B": choice_b.strip(),
-                "Choice C": choice_c.strip(),
-                "Choice D": choice_d.strip(),
-                "Key": key.strip(),
-                "Explanation": explanation.strip(),
-                "Reference": reference.strip()
-            })
+            if len(match) == 9:  # Ensure all fields are present
+                question_number, stem, choice_a, choice_b, choice_c, choice_d, key, explanation, reference = match
+                quiz_data.append({
+                    "Question number": question_number.strip(),
+                    "Stem": stem.strip(),
+                    "Choice A": choice_a.strip(),
+                    "Choice B": choice_b.strip(),
+                    "Choice C": choice_c.strip(),
+                    "Choice D": choice_d.strip(),
+                    "Key": key.strip(),
+                    "Explanation": explanation.strip(),
+                    "Reference": reference.strip()
+                })
+            else:
+                log_function(f"Skipping invalid question: {match}")  # Log invalid questions
 
     # Convert the list of dictionaries to a DataFrame
     df = pd.DataFrame(quiz_data)
+
+    # Log the DataFrame for debugging
+    log_function(f"DataFrame Created:\n{df}")
 
     # Save the DataFrame to a CSV file
     safe_filename = re.sub(r'[^\w\-_. ]', '_', Path(file_path).stem)  # Remove special characters
@@ -338,7 +361,10 @@ def process_quiz_output_to_csv(collected_output, file_path, log_function=print):
 # This part is the main code running all of the requests with OpenAI API using the previous functions in their desired order. This is made to run on one PDF.
 # In between run requests is also an added time delay to ensure the code is not interrupted by TPM (tokens per minute) limitations.
 def repeat_pdf(file_path, quiz_count, assistant_id_l, assistant_id_q, file_id, confirm_modify_lo=False, log_function=print):
-    """Handles OpenAI interaction for learning objectives and quiz generation."""
+    """
+    Handles OpenAI interaction for learning objectives and quiz generation.
+    Ensures that all quiz output is captured and processed correctly.
+    """
     log_function(f"Processing: {file_path}")
 
     global collected_output
